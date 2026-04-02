@@ -1,0 +1,38 @@
+{
+  "entities": {
+    "UserRequest": {
+      "title": "User Request",
+      "description": "A request for student portal access",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "reason": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "studentId": { "type": "string" }
+      },
+      "required": ["id", "name", "email", "status", "createdAt"]
+    },
+    "AdminConfig": {
+      "title": "Admin Configuration",
+      "description": "Global configuration for the admin panel",
+      "type": "object",
+      "properties": {
+        "adminPassword": { "type": "string" }
+      },
+      "required": ["adminPassword"]
+    }
+  },
+  "firestore": {
+    "/requests/{requestId}": {
+      "schema": "UserRequest",
+      "description": "Collection of student access requests"
+    },
+    "/config/admin": {
+      "schema": "AdminConfig",
+      "description": "Admin configuration document"
+    }
+  }
+}

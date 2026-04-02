@@ -93,6 +93,18 @@ const AdminPanel = ({ onLogout }: { onLogout: () => void }) => {
     }
   };
 
+  const deleteRequest = async (userId: string) => {
+    if (!confirm('Are you sure you want to delete this request?')) return;
+    try {
+      await fetch(`/api/admin/delete-request/${userId}`, {
+        method: 'DELETE',
+      });
+      fetchUsers();
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-navy-900 text-white p-8">
       <div className="max-w-6xl mx-auto">
@@ -142,6 +154,11 @@ const AdminPanel = ({ onLogout }: { onLogout: () => void }) => {
                       </span>
                     </div>
                     <p className="text-slate-400 text-sm mb-2">{user.email}</p>
+                    {user.studentId && (
+                      <p className="text-gold-500/80 text-xs font-mono mb-2 flex items-center gap-2">
+                        <ShieldCheck className="w-3 h-3" /> {user.studentId}
+                      </p>
+                    )}
                     <p className="text-slate-500 text-sm italic">"{user.reason}"</p>
                     <p className="text-[10px] text-slate-600 mt-4 uppercase tracking-widest">Requested: {new Date(user.createdAt).toLocaleString()}</p>
                   </div>
@@ -162,6 +179,13 @@ const AdminPanel = ({ onLogout }: { onLogout: () => void }) => {
                         Reject
                       </button>
                     )}
+                    <button 
+                      onClick={() => deleteRequest(user.id)}
+                      className="p-2 bg-red-500/10 hover:bg-red-500/30 text-red-400 border border-red-500/20 rounded-full transition-all"
+                      title="Delete Request"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </motion.div>
               ))
@@ -905,7 +929,7 @@ const IDCardGenerator = ({ studentId }: { studentId: string }) => {
                       </div>
                       <div>
                         <p className="text-[8px] text-gold-500 uppercase font-bold">Student ID</p>
-                        <p className="text-sm font-bold text-gold-500 uppercase font-mono">{studentId}</p>
+                        <p className="text-sm font-bold text-gold-500 uppercase font-mono">{studentId || 'PENDING APPROVAL'}</p>
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <div>

@@ -4,15 +4,38 @@ import path from "path";
 import fs from "fs";
 import nodemailer from "nodemailer";
 import dotenv from "dotenv";
+import { initializeApp } from "firebase/app";
+import { 
+  getFirestore, 
+  collection, 
+  addDoc, 
+  getDocs, 
+  query, 
+  where, 
+  updateDoc, 
+  deleteDoc,
+  doc, 
+  getDoc, 
+  setDoc,
+  serverTimestamp,
+  Timestamp
+} from "firebase/firestore";
+import { 
+  getAuth, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword,
+  onAuthStateChanged
+} from "firebase/auth";
 
 dotenv.config();
 
-const DATA_FILE = path.join(process.cwd(), "data.json");
+// Load Firebase Config
+import firebaseConfig from "./firebase-applet-config.json";
 
-// Initialize data file if it doesn't exist
-if (!fs.existsSync(DATA_FILE)) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify({ users: [], adminPassword: "admin123" }, null, 2));
-}
+// Initialize Firebase
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId);
+const auth = getAuth(firebaseApp);
 
 // Email Transporter Setup
 const transporter = nodemailer.createTransport({
@@ -45,15 +68,51 @@ const sendEmail = async (to: string, subject: string, text: string, html: string
   }
 };
 
+// Bootstrap Admin User and Config
+async function bootstrapAdmin() {
+  const adminEmail = "narasimhakala4@gmail.com";
+  const defaultPassword = "admin123"; // User can change this in Firestore later
+
+  try {
+    // Try to sign in as admin
+    await signInWithEmailAndPassword(auth, adminEmail, defaultPassword);
+    console.log("Admin logged in successfully");
+  } catch (error: any) {
+    if (error.code === "auth/user-not-found" || error.code === "auth/invalid-credential") {
+      try {
+        // Create admin user if not exists
+        await createUserWithEmailAndPassword(auth, adminEmail, defaultPassword);
+        console.log("Admin user created successfully");
+      } catch (createError) {
+        console.error("Failed to create admin user:", createError);
+      }
+    } else {
+      console.error("Admin login error:", error);
+    }
+  }
+
+  // Ensure admin config exists in Firestore
+  try {
+    const configDoc = await getDoc(doc(db, "config", "admin"));
+    if (!configDoc.exists()) {
+      await setDoc(doc(db, "config", "admin"), {
+        adminPassword: defaultPassword
+      });
+      console.log("Admin config bootstrapped in Firestore");
+    }
+  } catch (error) {
+    console.error("Error bootstrapping admin config:", error);
+  }
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   app.use(express.json());
 
-  // Helper to read/write data
-  const getData = () => JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
-  const saveData = (data: any) => fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+  // Bootstrap Firebase Admin
+  await bootstrapAdmin();
 
   // --- API Routes ---
 
@@ -62,116 +121,159 @@ async function startServer() {
     const { name, email, reason } = req.body;
     if (!name || !email) return res.status(400).json({ error: "Name and email are required" });
 
-    const data = getData();
-    const existingUser = data.users.find((u: any) => u.email === email);
-    if (existingUser) return res.status(400).json({ error: "Email already registered" });
+    try {
+      // Check if email already exists in Firestore
+      const q = query(collection(db, "requests"), where("email", "==", email));
+      const querySnapshot = await getDocs(q);
+      if (!querySnapshot.empty) {
+        return res.status(400).json({ error: "Email already registered" });
+      }
 
-    const newUser = {
-      id: Math.random().toString(36).substr(2, 9),
-      name,
-      email,
-      reason,
-      status: "pending",
-      createdAt: new Date().toISOString(),
-    };
+      const newUser = {
+        name,
+        email,
+        reason,
+        status: "pending",
+        createdAt: new Date().toISOString(),
+      };
 
-    data.users.push(newUser);
-    saveData(data);
+      const docRef = await addDoc(collection(db, "requests"), newUser);
+      const userWithId = { ...newUser, id: docRef.id };
 
-    // Notify Admin
-    if (process.env.ADMIN_EMAIL) {
-      await sendEmail(
-        process.env.ADMIN_EMAIL,
-        "New Verification Request: " + name,
-        `New registration request from ${name} (${email}). Reason: ${reason}`,
-        `
-          <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-            <h2 style="color: #F27D26;">New Verification Request</h2>
-            <p><strong>Name:</strong> ${name}</p>
-            <p><strong>Email:</strong> ${email}</p>
-            <p><strong>Reason:</strong> ${reason}</p>
-            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
-            <p>Log in to the admin panel to approve or reject this request.</p>
-            <a href="${process.env.APP_URL || '#'}" style="display: inline-block; padding: 10px 20px; background: #F27D26; color: white; text-decoration: none; border-radius: 5px;">Go to Admin Panel</a>
-          </div>
-        `
-      );
+      // Notify Admin
+      if (process.env.ADMIN_EMAIL) {
+        await sendEmail(
+          process.env.ADMIN_EMAIL,
+          "New Verification Request: " + name,
+          `New registration request from ${name} (${email}). Reason: ${reason}`,
+          `
+            <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+              <h2 style="color: #F27D26;">New Verification Request</h2>
+              <p><strong>Name:</strong> ${name}</p>
+              <p><strong>Email:</strong> ${email}</p>
+              <p><strong>Reason:</strong> ${reason}</p>
+              <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+              <p>Log in to the admin panel to approve or reject this request.</p>
+              <a href="${process.env.APP_URL || '#'}" style="display: inline-block; padding: 10px 20px; background: #F27D26; color: white; text-decoration: none; border-radius: 5px;">Go to Admin Panel</a>
+            </div>
+          `
+        );
+      }
+
+      res.json(userWithId);
+    } catch (error) {
+      console.error("Registration error:", error);
+      res.status(500).json({ error: "Failed to register" });
     }
-
-    res.json(newUser);
   });
 
   // Check user status
-  app.get("/api/status/:email", (req, res) => {
-    const data = getData();
-    const user = data.users.find((u: any) => u.email === req.params.email);
-    if (!user) return res.status(404).json({ error: "User not found" });
-    res.json(user);
+  app.get("/api/status/:email", async (req, res) => {
+    try {
+      const q = query(collection(db, "requests"), where("email", "==", req.params.email));
+      const querySnapshot = await getDocs(q);
+      if (querySnapshot.empty) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const doc = querySnapshot.docs[0];
+      res.json({ id: doc.id, ...doc.data() });
+    } catch (error) {
+      console.error("Status check error:", error);
+      res.status(500).json({ error: "Failed to check status" });
+    }
   });
 
   // Admin Login
-  app.post("/api/admin/login", (req, res) => {
+  app.post("/api/admin/login", async (req, res) => {
     const { password } = req.body;
-    const data = getData();
-    if (password === data.adminPassword) {
-      res.json({ success: true });
-    } else {
-      res.status(401).json({ error: "Invalid password" });
+    try {
+      const configDoc = await getDoc(doc(db, "config", "admin"));
+      if (configDoc.exists() && password === configDoc.data().adminPassword) {
+        res.json({ success: true });
+      } else {
+        res.status(401).json({ error: "Invalid password" });
+      }
+    } catch (error) {
+      console.error("Admin login error:", error);
+      res.status(500).json({ error: "Login failed" });
     }
   });
 
   // Get all users (Admin only)
-  app.get("/api/admin/users", (req, res) => {
-    const data = getData();
-    res.json(data.users);
+  app.get("/api/admin/users", async (req, res) => {
+    try {
+      const querySnapshot = await getDocs(collection(db, "requests"));
+      const users = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      res.json(users);
+    } catch (error) {
+      console.error("Fetch users error:", error);
+      res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
+  // Delete a request (Admin only)
+  app.delete("/api/admin/delete-request/:userId", async (req, res) => {
+    try {
+      await deleteDoc(doc(db, "requests", req.params.userId));
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Delete request error:", error);
+      res.status(500).json({ error: "Failed to delete request" });
+    }
   });
 
   // Update user status (Admin only)
   app.post("/api/admin/update-status", async (req, res) => {
     const { userId, status } = req.body;
-    const data = getData();
-    const userIndex = data.users.findIndex((u: any) => u.id === userId);
-    if (userIndex === -1) return res.status(404).json({ error: "User not found" });
+    try {
+      const userRef = doc(db, "requests", userId);
+      const userDoc = await getDoc(userRef);
+      if (!userDoc.exists()) return res.status(404).json({ error: "User not found" });
 
-    const user = data.users[userIndex];
-    user.status = status;
-    
-    // Generate unique Student ID if approved and doesn't have one
-    if (status === "approved" && !user.studentId) {
-      const year = new Date().getFullYear();
-      const randomPart = Math.floor(1000 + Math.random() * 9000);
-      user.studentId = `LARA-${year}-${randomPart}`;
+      const userData = userDoc.data();
+      const updateData: any = { status };
+
+      // Generate unique Student ID if approved and doesn't have one
+      if (status === "approved" && !userData.studentId) {
+        const year = new Date().getFullYear();
+        const randomPart = Math.floor(1000 + Math.random() * 9000);
+        updateData.studentId = `LARA-${year}-${randomPart}`;
+      }
+
+      await updateDoc(userRef, updateData);
+      const updatedUser = { ...userData, ...updateData, id: userId };
+
+      // Notify User
+      const subject = status === "approved" ? "Access Granted: Vignan's LARA Portal" : "Access Request Update: Vignan's LARA Portal";
+      const message = status === "approved" 
+        ? `Hello ${userData.name}, your request for access to the Vignan's LARA student portal has been APPROVED. You can now log in and explore the portal.`
+        : `Hello ${userData.name}, we regret to inform you that your request for access to the Vignan's LARA student portal has been REJECTED at this time.`;
+
+      await sendEmail(
+        userData.email,
+        subject,
+        message,
+        `
+          <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
+            <h2 style="color: ${status === 'approved' ? '#10B981' : '#EF4444'};">Access Request ${status.toUpperCase()}</h2>
+            <p>Hello <strong>${userData.name}</strong>,</p>
+            <p>${message}</p>
+            ${status === 'approved' ? `
+              <div style="margin-top: 20px;">
+                <a href="${process.env.APP_URL || '#'}" style="display: inline-block; padding: 10px 20px; background: #F27D26; color: white; text-decoration: none; border-radius: 5px;">Enter Student Portal</a>
+              </div>
+            ` : ''}
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
+            <p style="font-size: 12px; color: #666;">This is an automated message from Vignan's LARA Digital Identity Portal.</p>
+          </div>
+        `
+      );
+
+      res.json(updatedUser);
+    } catch (error) {
+      console.error("Update status error:", error);
+      res.status(500).json({ error: "Failed to update status" });
     }
-    
-    saveData(data);
-
-    // Notify User
-    const subject = status === "approved" ? "Access Granted: Vignan's LARA Portal" : "Access Request Update: Vignan's LARA Portal";
-    const message = status === "approved" 
-      ? `Hello ${user.name}, your request for access to the Vignan's LARA student portal has been APPROVED. You can now log in and explore the portal.`
-      : `Hello ${user.name}, we regret to inform you that your request for access to the Vignan's LARA student portal has been REJECTED at this time.`;
-
-    await sendEmail(
-      user.email,
-      subject,
-      message,
-      `
-        <div style="font-family: sans-serif; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
-          <h2 style="color: ${status === 'approved' ? '#10B981' : '#EF4444'};">Access Request ${status.toUpperCase()}</h2>
-          <p>Hello <strong>${user.name}</strong>,</p>
-          <p>${message}</p>
-          ${status === 'approved' ? `
-            <div style="margin-top: 20px;">
-              <a href="${process.env.APP_URL || '#'}" style="display: inline-block; padding: 10px 20px; background: #F27D26; color: white; text-decoration: none; border-radius: 5px;">Enter Student Portal</a>
-            </div>
-          ` : ''}
-          <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
-          <p style="font-size: 12px; color: #666;">This is an automated message from Vignan's LARA Digital Identity Portal.</p>
-        </div>
-      `
-    );
-
-    res.json(user);
   });
 
   // --- Vite Middleware ---

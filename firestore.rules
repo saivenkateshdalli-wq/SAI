@@ -1,0 +1,65 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: requests
+    // Document ID: requestId (random string)
+    // Fields:
+    //   - id: string (required)
+    //   - name: string (required)
+    //   - email: string (required, email format)
+    //   - reason: string (required)
+    //   - status: string (required, 'pending'|'approved'|'rejected')
+    //   - createdAt: string (required, ISO 8601)
+    //   - studentId: string (optional, generated on approval)
+    //
+    // Collection: config
+    // Document ID: admin
+    // Fields:
+    //   - adminPassword: string (required)
+    //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "narasimhakala4@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    // Requests Collection
+    match /requests/{requestId} {
+      // Allow anyone to create a request (registration)
+      allow create: if true; 
+      
+      // Allow anyone to read a request if they know the ID (status check)
+      // In a real app, we'd restrict this to the owner's email
+      allow read: if true;
+
+      // Only admin can update (approve/reject)
+      allow update: if isAdmin();
+      
+      // Only admin can delete
+      allow delete: if isAdmin();
+    }
+
+    // Config Collection
+    match /config/admin {
+      // Only admin can read/write config
+      allow read, write: if isAdmin();
+    }
+    
+    // Users Collection (for roles)
+    match /users/{userId} {
+      allow read: if request.auth.uid == userId || isAdmin();
+      allow write: if isAdmin();
+    }
+  }
+}
