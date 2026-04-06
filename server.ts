@@ -30,7 +30,7 @@ import {
 dotenv.config();
 
 // Load Firebase Config
-import firebaseConfig from "./firebase-applet-config.json";
+import firebaseConfig from "./firebase-applet-config.json" with { type: "json" };
 
 // Initialize Firebase
 const firebaseApp = initializeApp(firebaseConfig);
