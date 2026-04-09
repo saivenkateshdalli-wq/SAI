@@ -23,6 +23,20 @@
         "adminPassword": { "type": "string" }
       },
       "required": ["adminPassword"]
+    },
+    "Feedback": {
+      "title": "Feedback",
+      "description": "Student feedback or issue report",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentEmail": { "type": "string", "format": "email" },
+        "type": { "type": "string", "enum": ["suggestion", "issue"] },
+        "message": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "studentName", "studentEmail", "type", "message", "createdAt"]
     }
   },
   "firestore": {
@@ -33,6 +47,10 @@
     "/config/admin": {
       "schema": "AdminConfig",
       "description": "Admin configuration document"
+    },
+    "/feedback/{feedbackId}": {
+      "schema": "Feedback",
+      "description": "Collection of student feedback and issue reports"
     }
   }
 }

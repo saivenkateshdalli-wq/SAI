@@ -71,12 +71,12 @@ const sendEmail = async (to: string, subject: string, text: string, html: string
 // Bootstrap Admin User and Config
 async function bootstrapAdmin() {
   const adminEmail = "narasimhakala4@gmail.com";
-  const defaultPassword = "admin123"; // User can change this in Firestore later
+  const defaultPassword = "Venkatesh4424"; // Updated password
 
   try {
     // Try to sign in as admin
-    await signInWithEmailAndPassword(auth, adminEmail, defaultPassword);
-    console.log("Admin logged in successfully");
+    const userCredential = await signInWithEmailAndPassword(auth, adminEmail, defaultPassword);
+    console.log("Admin logged in successfully:", userCredential.user.email);
   } catch (error: any) {
     if (error.code === "auth/user-not-found" || error.code === "auth/invalid-credential") {
       try {
@@ -86,23 +86,45 @@ async function bootstrapAdmin() {
       } catch (createError) {
         console.error("Failed to create admin user:", createError);
       }
+    } else if (error.code === "auth/operation-not-allowed") {
+      console.error("CRITICAL: Email/Password authentication is not enabled in Firebase Console.");
+      console.error("Please go to Authentication > Sign-in method and enable Email/Password.");
     } else {
       console.error("Admin login error:", error);
     }
   }
 
-  // Ensure admin config exists in Firestore
-  try {
-    const configDoc = await getDoc(doc(db, "config", "admin"));
-    if (!configDoc.exists()) {
-      await setDoc(doc(db, "config", "admin"), {
-        adminPassword: defaultPassword
-      });
-      console.log("Admin config bootstrapped in Firestore");
+    // Ensure admin user document exists in Firestore
+    if (auth.currentUser) {
+      try {
+        const userDoc = await getDoc(doc(db, "users", auth.currentUser.uid));
+        if (!userDoc.exists()) {
+          await setDoc(doc(db, "users", auth.currentUser.uid), {
+            email: adminEmail,
+            role: "admin",
+            createdAt: serverTimestamp()
+          });
+          console.log("Admin user document created in Firestore");
+        }
+      } catch (error) {
+        console.error("Error creating admin user document:", error);
+      }
+    } else {
+      console.warn("No current user after bootstrap login. Skipping user document creation.");
     }
-  } catch (error) {
-    console.error("Error bootstrapping admin config:", error);
-  }
+
+    // Ensure admin config exists in Firestore
+    try {
+      const configDoc = await getDoc(doc(db, "config", "admin"));
+      if (!configDoc.exists()) {
+        await setDoc(doc(db, "config", "admin"), {
+          adminPassword: defaultPassword
+        });
+        console.log("Admin config bootstrapped in Firestore");
+      }
+    } catch (error) {
+      console.error("Error bootstrapping admin config:", error);
+    }
 }
 
 async function startServer() {
@@ -186,21 +208,31 @@ async function startServer() {
   // Admin Login
   app.post("/api/admin/login", async (req, res) => {
     const { password } = req.body;
+    console.log("Admin login attempt. Auth user:", auth.currentUser?.email || "NOT LOGGED IN");
+    
     try {
-      const configDoc = await getDoc(doc(db, "config", "admin"));
+      const configRef = doc(db, "config", "admin");
+      const configDoc = await getDoc(configRef);
+      
       if (configDoc.exists() && password === configDoc.data().adminPassword) {
         res.json({ success: true });
       } else {
         res.status(401).json({ error: "Invalid password" });
       }
-    } catch (error) {
-      console.error("Admin login error:", error);
-      res.status(500).json({ error: "Login failed" });
+    } catch (error: any) {
+      console.error("Admin login error (Firestore):", error.message || error);
+      console.error("Error details:", JSON.stringify(error));
+      
+      if (error.code === 'permission-denied') {
+        console.error("CRITICAL: Permission denied on config/admin read. Check Firestore rules.");
+      }
+      res.status(500).json({ error: "Login failed due to database permission issues" });
     }
   });
 
   // Get all users (Admin only)
   app.get("/api/admin/users", async (req, res) => {
+    if (!auth.currentUser) await bootstrapAdmin();
     try {
       const querySnapshot = await getDocs(collection(db, "requests"));
       const users = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -211,8 +243,49 @@ async function startServer() {
     }
   });
 
+  // Feedback Endpoint
+  app.post("/api/feedback", async (req, res) => {
+    const { studentName, studentEmail, type, message } = req.body;
+    
+    if (!studentName || !studentEmail || !type || !message) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    try {
+      const feedbackRef = collection(db, "feedback");
+      const newFeedback = {
+        studentName,
+        studentEmail,
+        type,
+        message,
+        createdAt: new Date().toISOString()
+      };
+      const docRef = await addDoc(feedbackRef, newFeedback);
+      res.status(201).json({ id: docRef.id, ...newFeedback });
+    } catch (error) {
+      console.error("Feedback submission error:", error);
+      res.status(500).json({ error: "Failed to submit feedback" });
+    }
+  });
+
+  // Get all feedback (Admin only)
+  app.get("/api/admin/feedback", async (req, res) => {
+    if (!auth.currentUser) await bootstrapAdmin();
+    try {
+      const querySnapshot = await getDocs(collection(db, "feedback"));
+      const feedback = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Sort by date descending
+      feedback.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      res.json(feedback);
+    } catch (error) {
+      console.error("Fetch feedback error:", error);
+      res.status(500).json({ error: "Failed to fetch feedback" });
+    }
+  });
+
   // Delete a request (Admin only)
   app.delete("/api/admin/delete-request/:userId", async (req, res) => {
+    if (!auth.currentUser) await bootstrapAdmin();
     try {
       await deleteDoc(doc(db, "requests", req.params.userId));
       res.json({ success: true });
@@ -225,10 +298,23 @@ async function startServer() {
   // Update user status (Admin only)
   app.post("/api/admin/update-status", async (req, res) => {
     const { userId, status } = req.body;
+    
+    // Ensure admin is logged in for Firestore rules
+    if (!auth.currentUser) {
+      console.log("Admin not logged in. Re-bootstrapping...");
+      await bootstrapAdmin();
+    }
+    
+    console.log(`Attempting to update status for user ${userId} to ${status}`);
+    console.log("Current Auth User:", auth.currentUser?.email || "NONE");
+
     try {
       const userRef = doc(db, "requests", userId);
       const userDoc = await getDoc(userRef);
-      if (!userDoc.exists()) return res.status(404).json({ error: "User not found" });
+      if (!userDoc.exists()) {
+        console.error(`User ${userId} not found in Firestore`);
+        return res.status(404).json({ error: "User not found" });
+      }
 
       const userData = userDoc.data();
       const updateData: any = { status };
@@ -238,9 +324,11 @@ async function startServer() {
         const year = new Date().getFullYear();
         const randomPart = Math.floor(1000 + Math.random() * 9000);
         updateData.studentId = `LARA-${year}-${randomPart}`;
+        console.log(`Generated Student ID: ${updateData.studentId}`);
       }
 
       await updateDoc(userRef, updateData);
+      console.log(`Successfully updated status for ${userId}`);
       const updatedUser = { ...userData, ...updateData, id: userId };
 
       // Notify User

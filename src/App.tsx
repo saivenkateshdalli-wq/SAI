@@ -62,7 +62,9 @@ interface StudentData {
 
 const AdminPanel = ({ onLogout }: { onLogout: () => void }) => {
   const [users, setUsers] = useState<UserRequest[]>([]);
+  const [feedback, setFeedback] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'requests' | 'feedback'>('requests');
 
   const fetchUsers = async () => {
     try {
@@ -71,37 +73,65 @@ const AdminPanel = ({ onLogout }: { onLogout: () => void }) => {
       setUsers(data);
     } catch (err) {
       console.error(err);
-    } finally {
-      setLoading(false);
     }
   };
 
+  const fetchFeedback = async () => {
+    try {
+      const res = await fetch('/api/admin/feedback');
+      const data = await res.json();
+      setFeedback(data);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchData = async () => {
+    setLoading(true);
+    await Promise.all([fetchUsers(), fetchFeedback()]);
+    setLoading(false);
+  };
+
   useEffect(() => {
-    fetchUsers();
+    fetchData();
   }, []);
 
   const updateStatus = async (userId: string, status: string) => {
     try {
-      await fetch('/api/admin/update-status', {
+      const res = await fetch('/api/admin/update-status', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId, status }),
       });
-      fetchUsers();
+      
+      if (!res.ok) {
+        const errorData = await res.json();
+        alert(`Error: ${errorData.error || 'Failed to update status'}`);
+        return;
+      }
+      
+      await fetchUsers();
     } catch (err) {
       console.error(err);
+      alert('Network error. Please try again.');
     }
   };
 
   const deleteRequest = async (userId: string) => {
     if (!confirm('Are you sure you want to delete this request?')) return;
     try {
-      await fetch(`/api/admin/delete-request/${userId}`, {
+      const res = await fetch(`/api/admin/delete-request/${userId}`, {
         method: 'DELETE',
       });
-      fetchUsers();
+      if (!res.ok) {
+        const errorData = await res.json();
+        alert(`Error: ${errorData.error || 'Failed to delete request'}`);
+        return;
+      }
+      await fetchUsers();
     } catch (err) {
       console.error(err);
+      alert('Network error. Please try again.');
     }
   };
 
@@ -115,19 +145,49 @@ const AdminPanel = ({ onLogout }: { onLogout: () => void }) => {
             </h1>
             <p className="text-slate-400 mt-2 italic">Review and manage student access requests</p>
           </div>
-          <button 
-            onClick={onLogout}
-            className="flex items-center gap-2 px-6 py-2 bg-navy-800 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-full transition-all"
-          >
-            <LogOut className="w-4 h-4" /> Logout
-          </button>
+          <div className="flex items-center gap-4">
+            {activeTab === 'requests' && users.some(u => u.status === 'pending') && (
+              <button 
+                onClick={async () => {
+                  if (!confirm('Approve all pending requests?')) return;
+                  const pending = users.filter(u => u.status === 'pending');
+                  for (const user of pending) {
+                    await updateStatus(user.id, 'approved');
+                  }
+                }}
+                className="flex items-center gap-2 px-6 py-2 bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/30 rounded-full transition-all text-sm font-bold"
+              >
+                <CheckCircle2 className="w-4 h-4" /> Approve All
+              </button>
+            )}
+            <div className="flex bg-navy-800 p-1 rounded-full border border-navy-700">
+              <button 
+                onClick={() => setActiveTab('requests')}
+                className={`px-6 py-2 rounded-full text-sm font-bold transition-all ${activeTab === 'requests' ? 'bg-gold-500 text-navy-900' : 'text-slate-400 hover:text-white'}`}
+              >
+                Requests
+              </button>
+              <button 
+                onClick={() => setActiveTab('feedback')}
+                className={`px-6 py-2 rounded-full text-sm font-bold transition-all ${activeTab === 'feedback' ? 'bg-gold-500 text-navy-900' : 'text-slate-400 hover:text-white'}`}
+              >
+                Feedback
+              </button>
+            </div>
+            <button 
+              onClick={onLogout}
+              className="flex items-center gap-2 px-6 py-2 bg-navy-800 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-full transition-all"
+            >
+              <LogOut className="w-4 h-4" /> Logout
+            </button>
+          </div>
         </div>
 
         {loading ? (
           <div className="flex justify-center py-20">
             <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-gold-500"></div>
           </div>
-        ) : (
+        ) : activeTab === 'requests' ? (
           <div className="grid gap-6">
             {users.length === 0 ? (
               <div className="text-center py-20 bg-navy-800/50 rounded-3xl border border-navy-700">
@@ -191,6 +251,42 @@ const AdminPanel = ({ onLogout }: { onLogout: () => void }) => {
               ))
             )}
           </div>
+        ) : (
+          <div className="grid gap-6">
+            {feedback.length === 0 ? (
+              <div className="text-center py-20 bg-navy-800/50 rounded-3xl border border-navy-700">
+                <Mail className="w-12 h-12 text-slate-600 mx-auto mb-4" />
+                <p className="text-slate-400">No feedback received yet.</p>
+              </div>
+            ) : (
+              feedback.map((item) => (
+                <motion.div 
+                  key={item.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-navy-800/50 p-6 rounded-3xl border border-navy-700"
+                >
+                  <div className="flex justify-between items-start mb-4">
+                    <div>
+                      <div className="flex items-center gap-3 mb-1">
+                        <h3 className="text-xl font-bold">{item.studentName}</h3>
+                        <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                          item.type === 'issue' ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-gold-500/20 text-gold-400 border border-gold-500/30'
+                        }`}>
+                          {item.type}
+                        </span>
+                      </div>
+                      <p className="text-slate-400 text-sm">{item.studentEmail}</p>
+                    </div>
+                    <p className="text-[10px] text-slate-600 uppercase tracking-widest">{new Date(item.createdAt).toLocaleString()}</p>
+                  </div>
+                  <div className="bg-navy-900/50 p-4 rounded-2xl border border-navy-700">
+                    <p className="text-slate-300 italic">"{item.message}"</p>
+                  </div>
+                </motion.div>
+              ))
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -205,7 +301,7 @@ const VerificationGate = ({ onApproved }: { onApproved: (studentId: string) => v
   const [userStatus, setUserStatus] = useState<UserRequest | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const [isAdminMode, setIsAdminMode] = useState(false);
+  const [isAdminMode, setIsAdminMode] = useState(true);
 
   useEffect(() => {
     const savedEmail = localStorage.getItem('vignan_user_email');
@@ -513,12 +609,18 @@ const VerificationGate = ({ onApproved }: { onApproved: (studentId: string) => v
           )}
         </AnimatePresence>
 
-        <div className="mt-12 pt-8 border-t border-navy-700/50 flex justify-center">
+        <div className="mt-12 pt-8 border-t border-navy-700/50 flex justify-center gap-8">
           <button 
             onClick={() => setView('admin-login')}
             className="flex items-center gap-2 text-slate-600 hover:text-gold-500/60 text-[10px] uppercase tracking-[0.2em] font-bold transition-all"
           >
             <ShieldCheck className="w-3 h-3" /> Admin Access
+          </button>
+          <button 
+            onClick={() => onApproved('DEV-BYPASS-MODE')}
+            className="flex items-center gap-2 text-slate-600 hover:text-gold-500/60 text-[10px] uppercase tracking-[0.2em] font-bold transition-all"
+          >
+            <Zap className="w-3 h-3" /> Bypass Gate
           </button>
         </div>
       </motion.div>
@@ -665,7 +767,6 @@ const IDCardGenerator = ({ studentId }: { studentId: string }) => {
     year: '1st Year',
     photo: null,
   });
-  const [verificationCode, setVerificationCode] = useState('');
   const [isVerified, setIsVerified] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
   const [verificationError, setVerificationError] = useState('');
@@ -675,11 +776,6 @@ const IDCardGenerator = ({ studentId }: { studentId: string }) => {
   const handleVerify = () => {
     if (!student.rollNumber || student.rollNumber.length < 10) {
       setVerificationError('Please enter a valid 10-digit Roll Number.');
-      return;
-    }
-
-    if (!verificationCode) {
-      setVerificationError('Please enter the Founder\'s Verification Key.');
       return;
     }
     
@@ -695,12 +791,8 @@ const IDCardGenerator = ({ studentId }: { studentId: string }) => {
                           roll.startsWith('24FE') ||
                           roll.startsWith('25FE');
       
-      const isValidKey = verificationCode === '8341413774';
-
-      if (isValidRoll && isValidKey) {
+      if (isValidRoll) {
         setIsVerified(true);
-      } else if (!isValidKey) {
-        setVerificationError('Invalid Verification Key. Access Denied.');
       } else {
         setVerificationError('Identity not found in college database. Please check your Roll Number.');
       }
@@ -783,6 +875,7 @@ const IDCardGenerator = ({ studentId }: { studentId: string }) => {
                     onChange={(e) => setStudent({ ...student, branch: e.target.value })}
                   >
                     <option>CSE</option>
+                    <option>CSD - A</option>
                     <option>ECE</option>
                     <option>MECH</option>
                     <option>CIVIL</option>
@@ -803,20 +896,6 @@ const IDCardGenerator = ({ studentId }: { studentId: string }) => {
                   <option>3rd Year</option>
                   <option>4th Year</option>
                 </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-400 mb-1">Founder's Verification Key</label>
-                <input 
-                  type="password" 
-                  className="w-full bg-navy-900 border border-navy-700 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-gold-500 transition-colors"
-                  placeholder="Enter 10-digit Verification Key"
-                  value={verificationCode}
-                  onChange={(e) => {
-                    setVerificationCode(e.target.value);
-                    setIsVerified(false);
-                    setVerificationError('');
-                  }}
-                />
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-1">Passport Photo</label>
@@ -888,92 +967,101 @@ const IDCardGenerator = ({ studentId }: { studentId: string }) => {
               {showCard ? (
                 <motion.div 
                   key="id-card"
-                  initial={{ opacity: 0, rotateY: 90 }}
-                  animate={{ opacity: 1, rotateY: 0 }}
-                  className="w-full max-w-sm aspect-[1.58/1] id-card-gradient rounded-2xl border-2 border-gold-500/30 p-6 shadow-2xl relative overflow-hidden flex flex-col"
+                  initial={{ opacity: 0, y: 50, rotateX: 20 }}
+                  animate={{ opacity: 1, y: 0, rotateX: 0 }}
+                  className="w-full max-w-[340px] aspect-[1/1.58] bg-navy-800/90 backdrop-blur-2xl rounded-[2.5rem] border border-white/10 p-8 shadow-2xl relative overflow-hidden flex flex-col items-center text-center id-card-texture"
                 >
-                  {/* Card Header */}
-                  <div className="flex items-center justify-between mb-6 border-b border-gold-500/20 pb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 bg-gold-500 rounded flex items-center justify-center font-display font-bold text-navy-900 text-xl">V</div>
-                      <div>
-                        <h4 className="text-xs font-bold text-white leading-tight">VIGNAN'S LARA</h4>
-                        <p className="text-[8px] text-gold-500 tracking-widest font-bold">INSTITUTE OF TECH & SCI</p>
+                  {/* Modern Header */}
+                  <div className="w-full flex flex-col items-center mb-6">
+                    <div className="w-14 h-14 bg-gold-500 rounded-2xl flex items-center justify-center font-display font-bold text-navy-900 text-2xl mb-3 shadow-lg shadow-gold-500/20">V</div>
+                    <h4 className="text-sm font-bold text-white tracking-[0.2em] uppercase">Vignan's Lara</h4>
+                    <p className="text-[9px] text-gold-500/80 font-bold tracking-[0.4em] uppercase mt-1">Institute of Tech & Sci</p>
+                  </div>
+
+                  {/* Photo Section */}
+                  <div className="relative mb-8">
+                    <div className="w-36 h-36 rounded-full border-2 border-gold-500/30 p-1.5 bg-navy-900/50">
+                      <div className="w-full h-full rounded-full bg-navy-900 overflow-hidden border border-white/10 flex items-center justify-center shadow-inner">
+                        {student.photo ? (
+                          <img src={student.photo} alt="Student" className="w-full h-full object-cover" />
+                        ) : (
+                          <User className="w-14 h-14 text-navy-700" />
+                        )}
                       </div>
                     </div>
-                    <div className="flex flex-col items-end">
-                      <div className="flex items-center gap-1 bg-green-500/20 px-2 py-0.5 rounded-full border border-green-500/30">
-                        <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-                        <span className="text-[6px] font-bold text-green-500 uppercase tracking-tighter">Verified Identity</span>
-                      </div>
+                    <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 bg-gold-500 text-navy-900 text-[9px] font-bold px-4 py-1 rounded-full border-2 border-navy-800 uppercase tracking-widest shadow-lg">
+                      Verified
                     </div>
                   </div>
 
-                  {/* Card Content */}
-                  <div className="flex gap-6 flex-1">
-                    <div className="w-24 h-32 bg-navy-800 rounded-lg border border-gold-500/10 overflow-hidden flex items-center justify-center">
-                      {student.photo ? (
-                        <img src={student.photo} alt="Student" className="w-full h-full object-cover" />
-                      ) : (
-                        <User className="w-12 h-12 text-navy-700" />
-                      )}
+                  {/* Info Section */}
+                  <div className="w-full space-y-5 mb-6">
+                    <div className="bg-white/5 py-3 px-4 rounded-2xl border border-white/5">
+                      <p className="text-[8px] text-slate-500 uppercase tracking-widest font-bold mb-1">Full Name</p>
+                      <p className="text-base font-bold text-white uppercase truncate">{student.fullName || 'YOUR NAME'}</p>
                     </div>
-                    <div className="flex-1 space-y-2">
-                      <div>
-                        <p className="text-[8px] text-gold-500 uppercase font-bold">Full Name</p>
-                        <p className="text-sm font-bold text-white uppercase truncate">{student.fullName || 'YOUR NAME'}</p>
+                    
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-white/5 py-3 px-2 rounded-2xl border border-white/5">
+                        <p className="text-[8px] text-slate-500 uppercase tracking-widest font-bold mb-1">Roll No</p>
+                        <p className="text-xs font-bold text-white uppercase">{student.rollNumber || '21FE1AXXXX'}</p>
                       </div>
-                      <div>
-                        <p className="text-[8px] text-gold-500 uppercase font-bold">Roll Number</p>
-                        <p className="text-sm font-bold text-white uppercase">{student.rollNumber || '21FE1AXXXX'}</p>
+                      <div className="bg-white/5 py-3 px-2 rounded-2xl border border-white/5">
+                        <p className="text-[8px] text-slate-500 uppercase tracking-widest font-bold mb-1">Branch</p>
+                        <p className="text-xs font-bold text-white">{student.branch}</p>
                       </div>
-                      <div>
-                        <p className="text-[8px] text-gold-500 uppercase font-bold">Student ID</p>
-                        <p className="text-sm font-bold text-gold-500 uppercase font-mono">{studentId || 'PENDING APPROVAL'}</p>
-                      </div>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div>
-                          <p className="text-[8px] text-gold-500 uppercase font-bold">Branch</p>
-                          <p className="text-xs font-bold text-white">{student.branch}</p>
-                        </div>
-                        <div>
-                          <p className="text-[8px] text-gold-500 uppercase font-bold">Year</p>
-                          <p className="text-xs font-bold text-white">{student.year}</p>
-                        </div>
-                      </div>
+                    </div>
+
+                    <div className="bg-gold-500/5 py-3 px-4 rounded-2xl border border-gold-500/10">
+                      <p className="text-[8px] text-gold-500 uppercase tracking-widest font-bold mb-1">Student ID</p>
+                      <p className="text-sm font-bold text-gold-500 font-mono tracking-widest">{studentId || 'LARA-2026-XXXX'}</p>
                     </div>
                   </div>
 
-                  {/* Barcode Placeholder */}
-                  <div className="mt-4 pt-4 border-t border-gold-500/10 flex justify-between items-end">
-                    <div className="flex gap-[2px]">
-                      {[...Array(30)].map((_, i) => (
-                        <div 
-                          key={i} 
-                          className="bg-white/80" 
-                          style={{ 
-                            width: `${Math.random() * 3 + 1}px`, 
-                            height: '20px',
-                            opacity: Math.random() > 0.3 ? 1 : 0.5
-                          }} 
+                  {/* Footer / Barcode / Signature */}
+                  <div className="w-full mt-auto pt-6 border-t border-white/5 flex flex-col items-center gap-4">
+                    <div className="w-full flex justify-between items-end px-2">
+                      <div className="flex flex-col items-start gap-1">
+                        <p className="text-[7px] text-slate-500 uppercase tracking-widest font-bold">Verified By</p>
+                        <img 
+                          src="https://storage.googleapis.com/m-infra.appspot.com/public/res/ai-studio/f4702008-090c-4977-9694-547384738473.png" 
+                          alt="Signature" 
+                          className="h-8 w-auto invert opacity-80 mix-blend-screen"
+                          referrerPolicy="no-referrer"
                         />
-                      ))}
+                      </div>
+                      <div className="flex gap-[1.5px] h-6 items-center">
+                        {[...Array(25)].map((_, i) => (
+                          <div 
+                            key={i} 
+                            className="bg-white/40" 
+                            style={{ 
+                              width: `${Math.random() * 2 + 1}px`, 
+                              height: `${Math.random() * 100}%`,
+                              minHeight: '8px'
+                            }} 
+                          />
+                        ))}
+                      </div>
                     </div>
-                    <p className="text-[10px] font-mono text-gold-500/50">STUDENT ID CARD</p>
+                    <p className="text-[8px] font-mono text-slate-600 tracking-[0.5em]">DIGITAL IDENTITY CARD</p>
                   </div>
 
-                  {/* Decorative Elements */}
-                  <div className="absolute -right-10 -bottom-10 w-40 h-40 bg-gold-500/5 rounded-full blur-3xl" />
+                  {/* Background Glows */}
+                  <div className="absolute -top-20 -right-20 w-40 h-40 bg-gold-500/10 rounded-full blur-3xl" />
+                  <div className="absolute -bottom-20 -left-20 w-40 h-40 bg-gold-500/5 rounded-full blur-3xl" />
                 </motion.div>
               ) : (
                 <motion.div 
                   key="placeholder"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  className="w-full max-w-sm aspect-[1.58/1] bg-navy-800/50 border-2 border-dashed border-navy-700 rounded-2xl flex flex-col items-center justify-center text-slate-500"
+                  className="w-full max-w-[320px] aspect-[1/1.58] bg-navy-800/30 border-2 border-dashed border-navy-700 rounded-[2.5rem] flex flex-col items-center justify-center text-slate-600"
                 >
-                  <CreditCard className="w-16 h-16 mb-4 opacity-20" />
-                  <p className="text-sm">Your ID card will appear here</p>
+                  <div className="w-16 h-16 rounded-2xl bg-navy-800/50 flex items-center justify-center mb-4 border border-navy-700">
+                    <CreditCard className="w-8 h-8 opacity-20" />
+                  </div>
+                  <p className="text-xs font-bold uppercase tracking-widest">ID Card Preview</p>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -990,6 +1078,7 @@ const IDCardGenerator = ({ studentId }: { studentId: string }) => {
 const Departments = () => {
   const depts = [
     { name: 'CSE', icon: <Cpu />, desc: 'Computer Science & Engineering focusing on AI, ML, and Data Science.' },
+    { name: 'CSD', icon: <BookOpen />, desc: 'Computer Science and Design integrating computing with creative design principles.' },
     { name: 'ECE', icon: <Zap />, desc: 'Electronics & Communication Engineering exploring VLSI and Embedded Systems.' },
     { name: 'MECH', icon: <Settings />, desc: 'Mechanical Engineering with advanced robotics and manufacturing labs.' },
     { name: 'CIVIL', icon: <Building2 />, desc: 'Civil Engineering building sustainable infrastructure for the future.' },
@@ -1156,6 +1245,155 @@ const Gallery = () => {
               </motion.div>
             ))}
           </AnimatePresence>
+        </motion.div>
+      </div>
+    </section>
+  );
+};
+
+const FeedbackForm = () => {
+  const [formData, setFormData] = useState({
+    studentName: '',
+    studentEmail: '',
+    type: 'suggestion' as 'suggestion' | 'issue',
+    message: ''
+  });
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData),
+      });
+      if (res.ok) {
+        setSuccess(true);
+        setFormData({ studentName: '', studentEmail: '', type: 'suggestion', message: '' });
+        setTimeout(() => setSuccess(false), 5000);
+      } else {
+        const data = await res.json();
+        setError(data.error || 'Failed to submit feedback');
+      }
+    } catch (err) {
+      setError('Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <section id="feedback" className="py-24 bg-navy-900 border-t border-navy-800">
+      <div className="container mx-auto px-6 max-w-4xl">
+        <div className="text-center mb-12">
+          <h2 className="text-4xl font-bold mb-4">Student Feedback</h2>
+          <p className="text-slate-400 italic">Help us improve your campus experience. Submit suggestions or report issues.</p>
+        </div>
+
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          className="bg-navy-800/50 p-8 rounded-3xl border border-navy-700 shadow-xl"
+        >
+          {success ? (
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="text-center py-12"
+            >
+              <div className="w-20 h-20 bg-green-500/10 rounded-full flex items-center justify-center mx-auto mb-6 border border-green-500/20">
+                <CheckCircle2 className="w-10 h-10 text-green-500" />
+              </div>
+              <h3 className="text-2xl font-bold text-white mb-2">Thank You!</h3>
+              <p className="text-slate-400">Your feedback has been submitted successfully.</p>
+            </motion.div>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div className="grid md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-[10px] uppercase tracking-widest font-bold text-gold-500/60 mb-2">Your Name</label>
+                  <input 
+                    required
+                    type="text"
+                    value={formData.studentName}
+                    onChange={(e) => setFormData({...formData, studentName: e.target.value})}
+                    className="w-full bg-navy-900/50 border border-navy-700 rounded-2xl px-5 py-4 text-white focus:border-gold-500 outline-none transition-all"
+                    placeholder="Full Name"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase tracking-widest font-bold text-gold-500/60 mb-2">Email Address</label>
+                  <input 
+                    required
+                    type="email"
+                    value={formData.studentEmail}
+                    onChange={(e) => setFormData({...formData, studentEmail: e.target.value})}
+                    className="w-full bg-navy-900/50 border border-navy-700 rounded-2xl px-5 py-4 text-white focus:border-gold-500 outline-none transition-all"
+                    placeholder="example@vignanlara.org"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest font-bold text-gold-500/60 mb-2">Feedback Type</label>
+                <div className="flex gap-4">
+                  <button 
+                    type="button"
+                    onClick={() => setFormData({...formData, type: 'suggestion'})}
+                    className={`flex-1 py-3 rounded-xl border font-bold text-sm transition-all ${
+                      formData.type === 'suggestion' 
+                        ? 'bg-gold-500 text-navy-900 border-gold-500' 
+                        : 'bg-navy-900/50 text-slate-400 border-navy-700 hover:border-gold-500/30'
+                    }`}
+                  >
+                    Suggestion
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setFormData({...formData, type: 'issue'})}
+                    className={`flex-1 py-3 rounded-xl border font-bold text-sm transition-all ${
+                      formData.type === 'issue' 
+                        ? 'bg-red-500 text-white border-red-500' 
+                        : 'bg-navy-900/50 text-slate-400 border-navy-700 hover:border-red-500/30'
+                    }`}
+                  >
+                    Report Issue
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase tracking-widest font-bold text-gold-500/60 mb-2">Message</label>
+                <textarea 
+                  required
+                  value={formData.message}
+                  onChange={(e) => setFormData({...formData, message: e.target.value})}
+                  className="w-full bg-navy-900/50 border border-navy-700 rounded-2xl px-5 py-4 text-white focus:border-gold-500 outline-none transition-all h-32 resize-none"
+                  placeholder="Describe your suggestion or issue in detail..."
+                />
+              </div>
+
+              {error && (
+                <div className="flex items-center gap-2 text-red-400 text-xs bg-red-400/10 p-3 rounded-xl border border-red-400/20">
+                  <AlertCircle className="w-4 h-4" /> {error}
+                </div>
+              )}
+
+              <button 
+                disabled={loading}
+                type="submit"
+                className="w-full py-4 bg-gold-500 hover:bg-gold-600 disabled:opacity-50 text-navy-900 font-bold rounded-2xl transition-all transform hover:scale-[1.01] active:scale-[0.99] shadow-lg shadow-gold-500/20"
+              >
+                {loading ? 'Submitting...' : 'Send Feedback'}
+              </button>
+            </form>
+          )}
         </motion.div>
       </div>
     </section>
@@ -1330,6 +1568,7 @@ export default function App() {
           <Departments />
           <Events />
           <Gallery />
+          <FeedbackForm />
           <Footer />
         </motion.main>
       )}

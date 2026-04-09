@@ -30,36 +30,39 @@ service cloud.firestore {
 
     function isAdmin() {
       return isAuthenticated() &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          (request.auth.token.email == "narasimhakala4@gmail.com" && request.auth.token.email_verified == true));
+        ( request.auth.token.email == "narasimhakala4@gmail.com" ||
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'));
     }
 
     // Requests Collection
     match /requests/{requestId} {
-      // Allow anyone to create a request (registration)
-      allow create: if true; 
-      
-      // Allow anyone to read a request if they know the ID (status check)
-      // In a real app, we'd restrict this to the owner's email
-      allow read: if true;
-
-      // Only admin can update (approve/reject)
-      allow update: if isAdmin();
-      
-      // Only admin can delete
-      allow delete: if isAdmin();
+      allow create, read: if true; 
+      allow update, delete: if isAdmin();
     }
 
     // Config Collection
     match /config/admin {
-      // Only admin can read/write config
-      allow read, write: if isAdmin();
+      allow read: if true;
+      allow write: if isAdmin();
     }
     
     // Users Collection (for roles)
     match /users/{userId} {
       allow read: if request.auth.uid == userId || isAdmin();
-      allow write: if isAdmin();
+      // Allow the bootstrap admin to create their own record
+      allow write: if isAdmin() || (isAuthenticated() && request.auth.token.email == "narasimhakala4@gmail.com" && request.auth.uid == userId);
+    }
+
+    // Feedback Collection
+    match /feedback/{feedbackId} {
+      // Allow anyone to submit feedback
+      allow create: if true;
+      
+      // Only admin can read or delete feedback
+      allow read, delete: if isAdmin();
+      
+      // No updates allowed for feedback
+      allow update: if false;
     }
   }
 }
